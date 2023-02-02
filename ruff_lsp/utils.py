@@ -12,16 +12,14 @@ from typing import Any, Sequence
 
 def as_list(content: Any | list[Any] | tuple[Any, ...]) -> list[Any]:
     """Ensures we always get a list"""
-    if isinstance(content, (list, tuple)):
-        return list(content)
-    return [content]
+    return list(content) if isinstance(content, (list, tuple)) else [content]
 
 
 _site_paths = tuple(
-    [
-        os.path.normcase(os.path.normpath(p))
-        for p in (as_list(site.getsitepackages()) + as_list(site.getusersitepackages()))
-    ]
+    os.path.normcase(os.path.normpath(p))
+    for p in (
+        as_list(site.getsitepackages()) + as_list(site.getusersitepackages())
+    )
 )
 
 
