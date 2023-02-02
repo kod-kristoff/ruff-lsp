@@ -175,12 +175,15 @@ def _parse_output_using_regex(content: str) -> list[Diagnostic]:
 
 
 def _get_tags(code: str) -> list[DiagnosticTag] | None:
-    if code in {
-        "F401",  # `module` imported but unused
-        "F841",  # local variable `name` is assigned to but never used
-    }:
-        return [DiagnosticTag.Unnecessary]
-    return None
+    return (
+        [DiagnosticTag.Unnecessary]
+        if code
+        in {
+            "F401",  # `module` imported but unused
+            "F841",  # local variable `name` is assigned to but never used
+        }
+        else None
+    )
 
 
 def _get_severity(code: str) -> DiagnosticSeverity:
@@ -332,95 +335,92 @@ def code_action(params: CodeActionParams) -> list[CodeAction] | None:
 
     actions: list[CodeAction] = []
 
-    if settings["organizeImports"]:
-        # Add "Ruff: Organize Imports" as a supported action.
-        if not params.context.only or (
-            CodeActionKind.SourceOrganizeImports in params.context.only
-        ):
-            if CLIENT_CAPABILITIES[CODE_ACTION_RESOLVE]:
+    if settings["organizeImports"] and (
+        not params.context.only
+        or (CodeActionKind.SourceOrganizeImports in params.context.only)
+    ):
+        if CLIENT_CAPABILITIES[CODE_ACTION_RESOLVE]:
+            actions.append(
+                CodeAction(
+                    title="Ruff: Organize Imports",
+                    kind=CodeActionKind.SourceOrganizeImports,
+                    data=params.text_document.uri,
+                    edit=None,
+                    diagnostics=[],
+                ),
+            )
+        else:
+            results = _formatting_helper(document, only="I001")
+            if results is not None:
                 actions.append(
                     CodeAction(
                         title="Ruff: Organize Imports",
                         kind=CodeActionKind.SourceOrganizeImports,
                         data=params.text_document.uri,
-                        edit=None,
+                        edit=_create_workspace_edits(document, results),
                         diagnostics=[],
                     ),
                 )
-            else:
-                results = _formatting_helper(document, only="I001")
-                if results is not None:
-                    actions.append(
-                        CodeAction(
-                            title="Ruff: Organize Imports",
-                            kind=CodeActionKind.SourceOrganizeImports,
-                            data=params.text_document.uri,
-                            edit=_create_workspace_edits(document, results),
-                            diagnostics=[],
-                        ),
-                    )
 
-    if settings["fixAll"]:
-        # Add "Ruff: Fix All" as a supported action.
-        if not params.context.only or (
-            CodeActionKind.SourceFixAll in params.context.only
-        ):
-            if CLIENT_CAPABILITIES[CODE_ACTION_RESOLVE]:
+    if settings["fixAll"] and (
+        not params.context.only
+        or (CodeActionKind.SourceFixAll in params.context.only)
+    ):
+        if CLIENT_CAPABILITIES[CODE_ACTION_RESOLVE]:
+            actions.append(
+                CodeAction(
+                    title="Ruff: Fix All",
+                    kind=CodeActionKind.SourceFixAll,
+                    data=params.text_document.uri,
+                    edit=None,
+                    diagnostics=[],
+                ),
+            )
+        else:
+            results = _formatting_helper(document)
+            if results is not None:
                 actions.append(
                     CodeAction(
                         title="Ruff: Fix All",
                         kind=CodeActionKind.SourceFixAll,
                         data=params.text_document.uri,
-                        edit=None,
-                        diagnostics=[],
+                        edit=_create_workspace_edits(document, results),
+                        diagnostics=[
+                            diagnostic
+                            for diagnostic in params.context.diagnostics
+                            if diagnostic.source == "Ruff"
+                            and diagnostic.data is not None
+                        ],
                     ),
                 )
-            else:
-                results = _formatting_helper(document)
-                if results is not None:
-                    actions.append(
-                        CodeAction(
-                            title="Ruff: Fix All",
-                            kind=CodeActionKind.SourceFixAll,
-                            data=params.text_document.uri,
-                            edit=_create_workspace_edits(document, results),
-                            diagnostics=[
-                                diagnostic
-                                for diagnostic in params.context.diagnostics
-                                if diagnostic.source == "Ruff"
-                                and diagnostic.data is not None
-                            ],
-                        ),
-                    )
 
     # Add "Ruff: Autofix" for every fixable diagnostic.
     if not params.context.only or CodeActionKind.QuickFix in params.context.only:
         for diagnostic in params.context.diagnostics:
-            if diagnostic.source == "Ruff":
-                if diagnostic.data is not None:
-                    fix = cast(Fix, diagnostic.data)
+            if diagnostic.source == "Ruff" and diagnostic.data is not None:
+                fix = cast(Fix, diagnostic.data)
 
-                    title: str
-                    if fix.get("message"):
-                        title = f"Ruff ({diagnostic.code}): {fix['message']}"
-                    elif diagnostic.code:
-                        title = f"Ruff: Fix {diagnostic.code}"
-                    else:
-                        title = "Ruff: Autofix"
+                title: str
+                if fix.get("message"):
+                    title = f"Ruff ({diagnostic.code}): {fix['message']}"
+                elif diagnostic.code:
+                    title = f"Ruff: Fix {diagnostic.code}"
+                else:
+                    title = "Ruff: Autofix"
 
-                    actions.append(
-                        CodeAction(
-                            title=title,
-                            kind=CodeActionKind.QuickFix,
-                            data=params.text_document.uri,
-                            edit=_create_workspace_edit(
-                                document, cast(Fix, diagnostic.data)
-                            ),
-                            diagnostics=[diagnostic],
+                actions.append(
+                    CodeAction(
+                        title=title,
+                        kind=CodeActionKind.QuickFix,
+                        data=params.text_document.uri,
+                        edit=_create_workspace_edit(
+                            document, cast(Fix, diagnostic.data)
                         ),
-                    )
+                        diagnostics=[diagnostic],
+                    ),
+                )
 
-    return actions if actions else None
+    return actions or None
 
 
 @LSP_SERVER.feature(CODE_ACTION_RESOLVE)
@@ -556,9 +556,7 @@ def _create_workspace_edit(document: workspace.Document, fix: Fix) -> WorkspaceE
 def _get_line_endings(lines: list[str]) -> str | None:
     """Returns line endings used in the text."""
     try:
-        if lines[0][-2:] == "\r\n":
-            return "\r\n"
-        return "\n"
+        return "\r\n" if lines[0][-2:] == "\r\n" else "\n"
     except Exception:
         return None
 
@@ -711,14 +709,12 @@ def _executable_path(settings: dict[str, Any]) -> str:
     """Returns the path to the executable."""
     bundle = get_bundle()
     if settings["path"]:
-        # 'path' setting takes priority over everything.
         for path in settings["path"]:
             path = os.path.expanduser(os.path.expandvars(path))
             if os.path.exists(path):
                 log_to_output(f"Using 'path' setting: {path}")
                 return path
-        else:
-            log_to_output(f"Could not find executable in 'path': {settings['path']}")
+        log_to_output(f"Could not find executable in 'path': {settings['path']}")
 
     if settings["importStrategy"] == "useBundled" and bundle:
         # If we're loading from the bundle, use the absolute path.
@@ -801,11 +797,7 @@ def _run_tool_on_document(
         argv += ["--extend-select", only]
 
     # If we're using stdin, provide the filename.
-    if use_stdin:
-        argv += ["--stdin-filename", document.path]
-    else:
-        argv += [document.path]
-
+    argv += ["--stdin-filename", document.path] if use_stdin else [document.path]
     log_to_output(f"Running Ruff with: {argv}")
     result: utils.RunResult = utils.run_path(
         argv=argv,

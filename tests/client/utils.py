@@ -8,9 +8,7 @@ from typing import TypeVar
 
 def normalizecase(path: str) -> str:
     """Fixes 'file' uri or path case for easier testing in windows."""
-    if platform.system() == "Windows":
-        return path.lower()
-    return path
+    return path.lower() if platform.system() == "Windows" else path
 
 
 def as_uri(path: str) -> str:
